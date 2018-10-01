@@ -6,15 +6,14 @@ License     : MIT, see the file LICENSE
 -}
 module HiProlog.Interpreter where
 
-import Debug.Trace
-import Control.Applicative as A
-import Control.Monad
-import Control.Monad.State as S
-import Data.Char
-import qualified Data.Foldable as Fold
-import Data.List
-import Data.Maybe
-import Text.ParserCombinators.ReadP as R
+import           Control.Applicative          as A
+import           Control.Monad
+import           Control.Monad.State          as S
+import           Data.Char
+import qualified Data.Foldable                as Fold
+import           Data.List
+import           Data.Maybe
+import           Text.ParserCombinators.ReadP as R
 
 
 type Var = Integer
@@ -32,6 +31,10 @@ instance Show Term where
 
 
 newtype Subs = Subs [(AtomName, Term)] deriving (Eq, Show)
+
+
+identitySubs :: Subs
+identitySubs = Subs []
 
 
 data AtomicF = Pred String [Term] deriving (Eq, Read, Show)
@@ -61,7 +64,9 @@ solution = do
 
 
 splitGoalsAndProgram :: Program -> (Goals, Program)
-splitGoalsAndProgram _program = (concatMap toGoal . filter isGoal $ _program, filter (not . isGoal) _program)
+splitGoalsAndProgram _program = do
+  let (goals, program) = partition isGoal _program
+  (concatMap toGoal goals, program)
   where isGoal (Clause [] (_:_)) = True
         isGoal _                 = False
         toGoal (Clause [] _goal)  = _goal
@@ -114,17 +119,6 @@ computeSolution finder _sldTree@(SLDTree _ goals _) = do
   return $ narrowSolution (freeVariables goals) . composeSolution $ _solution
 
 
-computeSolution' :: (SLDTree -> Maybe [Subs]) -> SLDTree -> [Subs]
-computeSolution' finder = maybeToList . computeSolution finder
-
-
--- SLDTree
-
-
-identitySubs :: Subs
-identitySubs = Subs []
-
-
 computeSLDTree :: Program -> Goals -> SLDTree
 computeSLDTree _program _goals = evalState (sldTree identitySubs _goals _program) 1
 
@@ -151,8 +145,8 @@ instance Terms AtomicF where
 
 instance Terms Term where
     freeVariables (App _ terms) = freeVariables terms
-    freeVariables (Var var) = [var]
-    apply subs (App name terms) = App name $ apply subs terms
+    freeVariables (Var var)     = [var]
+    apply subs (App name terms)         = App name $ apply subs terms
     apply (Subs subs) var@(Var varName) = fromMaybe var $ lookup varName subs
 
 
@@ -236,12 +230,9 @@ varBind var@(Var varName) term | var == term              = return identitySubs
                                | otherwise                = return $ Subs [(varName, term)]
 
 
-freeVars var@(Var _) = [var]
+freeVars var@(Var _)  = [var]
 
 freeVars (App _ args) = concatMap freeVars args
-
-
--- /SLDTree
 
 
 followedBy :: ReadP a -> ReadP b -> ReadP a
@@ -271,7 +262,7 @@ alphaNum = satisfy isAlphaNum
 filterStream :: ReadP a -> String -> String
 filterStream _ [] = []
 filterStream p cs@(s:rest) = remove $ readP_to_S p cs
-  where remove [] = s : filterStream p rest
+  where remove []          = s : filterStream p rest
         remove ((_, fs):_) = filterStream p fs
 
 
