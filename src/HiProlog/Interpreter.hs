@@ -39,12 +39,22 @@ identitySubs = Subs []
 
 
 data AtomicF = Pred String [Term] deriving (Eq, Read, Show)
-data Clause = Clause (Maybe AtomicF) [AtomicF] deriving (Show,Read)
+data Clause = Clause (Maybe AtomicF) [AtomicF] deriving (Show, Read)
 type Program = [Clause]
 type Goals = [AtomicF]
 
 
-data SLDTree = SLDTree Subs Goals [SLDTree] deriving (Eq)
+data SLDTree = SLDTree { subs :: Subs, goals :: Goals, children :: [SLDTree] } deriving (Eq)
+
+
+isSuccess :: SLDTree -> Bool
+isSuccess (SLDTree subs [] _) = True
+isSuccess _                   = False
+
+
+isFailure :: SLDTree -> Bool
+isFailure tree | (not . isSuccess $ tree) && (null . children $ tree) = True
+               | otherwise = False
 
 
 instance Show SLDTree where
@@ -74,29 +84,26 @@ splitGoalsAndProgram _program = do
 
 
 findSolution :: SLDTree -> Maybe [Subs]
-findSolution (SLDTree subs [] _) = Just [subs]
-findSolution (SLDTree _ _ []) = Nothing
+findSolution tree | isSuccess tree = Just [subs tree]
+                  | isFailure tree = Nothing
 findSolution (SLDTree subs _ subTrees) = do
   result <- listToMaybe $ fromJust <$> filter isJust (findSolution <$> subTrees)
   return $ subs : result
 
 
 findSolutionBfs :: SLDTree -> Maybe [Subs]
-findSolutionBfs (SLDTree subs [] _) = Just [subs]
-findSolutionBfs (SLDTree _ _ []) = Nothing
+findSolutionBfs tree | isSuccess tree = Just [subs tree]
+                     | isFailure tree = Nothing
 findSolutionBfs tree@(SLDTree subs _ subTrees) = do
     let newTree = sldTreeToPaths (Subs []) tree
         bfsTravers = bfs [newTree]
-    (SLDTree subs _ _) <- listToMaybe $ filter success bfsTravers
+    (SLDTree subs _ _) <- listToMaybe $ filter isSuccess bfsTravers
     return [subs]
-  where success (SLDTree subs [] _) = True
-        success _                   = False
 
 
 bfs :: [SLDTree] -> [SLDTree]
 bfs [] = []
-bfs list = list ++ (bfs . concatMap subnodes $ list)
-  where subnodes (SLDTree _ _ subtrees) = subtrees
+bfs list = list ++ (bfs . concatMap children $ list)
 
 
 sldTreeToPaths :: Subs -> SLDTree -> SLDTree
