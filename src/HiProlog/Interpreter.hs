@@ -6,6 +6,7 @@ License     : MIT, see the file LICENSE
 -}
 module HiProlog.Interpreter where
 
+
 import           Control.Applicative          as A
 import           Control.Monad
 import           Control.Monad.State          as S
@@ -38,7 +39,7 @@ identitySubs = Subs []
 
 
 data AtomicF = Pred String [Term] deriving (Eq, Read, Show)
-data Clause = Clause [AtomicF] [AtomicF] deriving (Show,Read)
+data Clause = Clause (Maybe AtomicF) [AtomicF] deriving (Show,Read)
 type Program = [Clause]
 type Goals = [AtomicF]
 
@@ -67,9 +68,9 @@ splitGoalsAndProgram :: Program -> (Goals, Program)
 splitGoalsAndProgram _program = do
   let (goals, program) = partition isGoal _program
   (concatMap toGoal goals, program)
-  where isGoal (Clause [] (_:_)) = True
-        isGoal _                 = False
-        toGoal (Clause [] _goal)  = _goal
+  where isGoal (Clause Nothing (_:_)) = True
+        isGoal _                      = False
+        toGoal (Clause Nothing _goal)  = _goal
 
 
 findSolution :: SLDTree -> Maybe [Subs]
@@ -129,13 +130,13 @@ class Terms t where
 
 
 instance (Terms t) => Terms [t] where
-    freeVariables = foldr (union . freeVariables) []
-    apply subs = map $ apply subs
+    freeVariables = concatMap freeVariables
+    apply subs t = apply subs <$> t
 
 
 instance Terms Clause where
-    freeVariables (Clause _head _body) = freeVariables _head `union` freeVariables _body
-    apply subs (Clause _head _body) = Clause (apply subs _head) (apply subs _body)
+    freeVariables (Clause _head _body) = freeVariables (maybeToList _head) ++ freeVariables _body
+    apply subs (Clause _head _body) = Clause (apply subs <$> _head) (apply subs _body)
 
 
 instance Terms AtomicF where
@@ -157,12 +158,12 @@ instance Terms Subs where
 
 instantinate :: Clause -> State Var Clause
 instantinate _clause = do
-    rename <- renaming . freeVariables $ _clause
-    return $ apply rename _clause
+    renamed <- rename . freeVariables $ _clause
+    return $ apply renamed _clause
 
 
-renaming :: [VarT] -> State Var Subs
-renaming vars = Subs <$> foldM rename [] vars
+rename :: [VarT] -> State Var Subs
+rename vars = Subs <$> foldM rename [] vars
   where
     rename subs var = do
       index <- S.get
@@ -183,7 +184,7 @@ generateBranches :: (Goals, Program) -> Clause -> [SLDTree] -> State Var [SLDTre
 generateBranches (_goal : rest, _program) _clause result = do
     _state <- S.get
 
-    (Clause [_head] _body) <- instantinate _clause
+    (Clause (Just _head) _body) <- instantinate _clause
     let unification = unifyPredicates _head _goal
     newResult <- if isNothing unification then return result
       else do
@@ -273,7 +274,7 @@ commentBlock = do
     symb startTag
     comment <- A.many $ do
       rest <- look
-      la <- return $ take (length endOfComment) rest
+      let la = take (length endOfComment) rest
       if la == "*/" then empty
                     else R.get
     symb endOfComment <|> eof *> pure ""
@@ -281,9 +282,8 @@ commentBlock = do
 
 
 commentLine :: ReadP String
-commentLine = do
-    comment <- symb "%" *> manyTill R.get eof
-    return comment
+commentLine =
+    symb "%" *> manyTill R.get eof
 
 
 comments :: ReadP String
@@ -306,9 +306,9 @@ pfBody :: ReadP [Term]
 
 program = some $ skipSpaces *> clause
 clause = fact <|> rule <|> goal
-fact = do { _fact <- predicate <* symb "."; return $ Clause [_fact] [] }
-rule = do { _head <- predicate; symb ":-"; body <- predicates; symb "."; return $ Clause [_head] body }
-goal = symb ":-" *> predicates <* symb "." <**> pure (Clause [])
+fact = do { _fact <- predicate <* symb "."; return $ Clause (Just _fact) [] }
+rule = do { _head <- predicate; symb ":-"; body <- predicates; symb "."; return $ Clause (Just _head) body }
+goal = symb ":-" *> predicates <* symb "." <**> pure (Clause Nothing)
 predicates = predicate `sepBy1` symb ","
 predicate = Pred <$> pName <*> (skipSpaces *> pfBody)
 pName = (:) <$> lower <*> A.many alphaNum
