@@ -230,7 +230,7 @@ unify' subst (v1, v2) = do result <- unify (apply subst v1) (apply subst v2)
 
 
 compose subst2@(Subs subst2') subst1 = let (Subs new) = apply subst2 subst1
-                                       in Subs $ new ++ subst2'
+                                       in Subs $ subst2' ++ new
 
 
 varBind var@(Var varName) term | var == term              = return identitySubs
@@ -313,8 +313,8 @@ pfBody :: ReadP [Term]
 
 program = some $ skipSpaces *> clause
 clause = fact <|> rule <|> goal
-fact = do { _fact <- predicate <* symb "."; return $ Clause (Just _fact) [] }
-rule = do { _head <- predicate; symb ":-"; body <- predicates; symb "."; return $ Clause (Just _head) body }
+fact = do { _fact <- predicate <* symb "."; pure $ Clause (Just _fact) [] }
+rule = do { _head <- predicate <* symb ":-"; _body <- predicates <* symb "."; pure $ Clause (Just _head) _body }
 goal = symb ":-" *> predicates <* symb "." <**> pure (Clause Nothing)
 predicates = predicate `sepBy1` symb ","
 predicate = Pred <$> pName <*> (skipSpaces *> pfBody)
