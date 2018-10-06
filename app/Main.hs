@@ -4,4 +4,5 @@ import HiProlog.Interpreter
 
 main :: IO ()
 main = do
-  solution
+  program <- getContents
+  print $ eval program

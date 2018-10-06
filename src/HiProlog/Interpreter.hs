@@ -17,7 +17,16 @@ import           Data.Maybe
 import           Text.ParserCombinators.ReadP as R
 
 
-type Var = Integer
+eval :: String -> Maybe Subs
+eval programData = do
+    let parsedProgram = parseProgram programData
+    let (goals, _program) = splitGoalsAndProgram parsedProgram
+    let _sldTree = computeSLDTree _program goals
+    if null goals && null _program then empty
+      else computeSolution findSolution _sldTree
+
+
+type VarID = Integer
 
 type AtomName = String
 type VarT = AtomName
@@ -61,17 +70,6 @@ instance Show SLDTree where
     showsPrec ident (SLDTree subs goals subTrees) = foldr (.) id (replicate ident (showString "  ")) .
       shows subs . showChar ' ' .  shows goals . showString "\n" . showSubtrees subTrees
       where showSubtrees = foldr (\ a b -> showsPrec (ident + 1) a . showString "\n" . b) id
-
-
-solution :: IO ()
-solution = do
-    programData <- getContents
-    let parsedProgram = parseProgram programData
-    let (goals, _program) = splitGoalsAndProgram parsedProgram
-    let _sldTree = computeSLDTree _program goals
-    result <- if null goals && null _program then return empty
-              else return $ computeSolution findSolution _sldTree
-    print result
 
 
 splitGoalsAndProgram :: Program -> (Goals, Program)
@@ -163,13 +161,13 @@ instance Terms Subs where
     apply subs (Subs val) = Subs $ map ( \ (var, _term) -> (var, apply subs _term) ) val
 
 
-instantinate :: Clause -> State Var Clause
+instantinate :: Clause -> State VarID Clause
 instantinate _clause = do
     renamed <- rename . freeVariables $ _clause
     return $ apply renamed _clause
 
 
-rename :: [VarT] -> State Var Subs
+rename :: [VarT] -> State VarID Subs
 rename vars = Subs <$> foldM rename [] vars
   where
     rename subs var = do
@@ -179,7 +177,7 @@ rename vars = Subs <$> foldM rename [] vars
       return $ sub : subs
 
 
-sldTree :: Subs -> Goals -> Program -> State Var SLDTree
+sldTree :: Subs -> Goals -> Program -> State VarID SLDTree
 sldTree subs []    _       = return $ SLDTree subs [] []
 sldTree subs goals []      = return $ SLDTree subs goals []
 sldTree subs goals _program = do
@@ -187,7 +185,7 @@ sldTree subs goals _program = do
     return $ SLDTree subs goals branches
 
 
-generateBranches :: (Goals, Program) -> Clause -> [SLDTree] -> State Var [SLDTree]
+generateBranches :: (Goals, Program) -> Clause -> [SLDTree] -> State VarID [SLDTree]
 generateBranches (_goal : rest, _program) _clause result = do
     _state <- S.get
 
@@ -277,7 +275,7 @@ filterStream p cs@(s:rest) = remove $ readP_to_S p cs
 commentBlock :: ReadP String
 commentBlock = do
     let startTag = "/*"
-        endOfComment = "*/"
+    let endOfComment = "*/"
     symb startTag
     comment <- A.many $ do
       rest <- look
@@ -313,14 +311,17 @@ pfBody :: ReadP [Term]
 
 program = some $ skipSpaces *> clause
 clause = fact <|> rule <|> goal
-fact = do { _fact <- predicate <* symb "."; pure $ Clause (Just _fact) [] }
-rule = do { _head <- predicate <* symb ":-"; _body <- predicates <* symb "."; pure $ Clause (Just _head) _body }
-goal = symb ":-" *> predicates <* symb "." <**> pure (Clause Nothing)
+fact = do { _fact <- predicate <* symb "."; return $ Clause (Just _fact) [] }
+rule = do
+  _head <- predicate <* symb ":-"
+  _body <- predicates <* symb "."
+  return $ Clause (Just _head) _body
+goal = Clause Nothing <$> (symb ":-" *> predicates <* symb ".")
 predicates = predicate `sepBy1` symb ","
 predicate = Pred <$> pName <*> (skipSpaces *> pfBody)
 pName = (:) <$> lower <*> A.many alphaNum
 term = ( App <$> fName <*> (skipSpaces *> pfBody) )
-   <|> ( App <$> fName <*> pure [] )
+   <|> ( App <$> fName <*> return [] )
    <|> ( Var <$> vName )
 fName = pName
 vName = (:) <$> upper <*> A.many alphaNum
